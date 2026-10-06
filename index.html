@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>Lemon Launcher: Duck Hunt</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cellipse cx='32' cy='32' rx='26' ry='19' fill='%23f5d90a'/%3E%3C/svg%3E" />
+<link rel="stylesheet" href="style.css" />
+<script type="importmap">
+{ "imports": { "three": "./vendor/three.module.js" } }
+</script>
+</head>
+<body>
+<div id="app">
+  <canvas id="game"></canvas>
+
+  <!-- HUD -->
+  <div id="hud" class="hidden">
+    <div class="hud-box hud-left">
+      <div class="hud-label">SCORE</div>
+      <div id="hud-score" class="hud-big">0</div>
+      <div class="hud-sub">BEST <span id="hud-best">0</span></div>
+    </div>
+    <div class="hud-box hud-center">
+      <div class="hud-label">LEVEL <span id="hud-level">1</span></div>
+      <div id="hud-timer" class="hud-big">60</div>
+      <div class="hud-sub">DUCKS <span id="hud-hits">0</span> / <span id="hud-quota">8</span></div>
+    </div>
+    <div class="hud-box hud-right">
+      <div class="hud-label">COMBO</div>
+      <div id="hud-combo" class="hud-big">x1</div>
+      <div class="hud-sub">ACCURACY <span id="hud-acc">0%</span></div>
+    </div>
+    <div class="hud-box hud-ammo">
+      <div class="hud-label">LEMONS</div>
+      <div id="hud-ammo-icons"></div>
+      <div id="hud-reload" class="hidden">RELOADING…</div>
+      <div id="hud-ammo-hint" class="hud-sub">R to reload</div>
+    </div>
+    <div id="crosshair"><span></span><span></span><span></span><span></span><i></i></div>
+    <div id="hitmarker"></div>
+    <div id="banner" class="hidden"></div>
+    <div id="lock-hint" class="hidden">Click to aim</div>
+  </div>
+  <div id="popups"></div>
+
+  <!-- Start screen -->
+  <div id="screen-start" class="screen">
+    <div class="panel">
+      <div class="logo-lemon"></div>
+      <h1>Lemon Launcher<br><span>Duck Hunt</span></h1>
+      <p class="tag">Fresh-squeezed fun from the Choto lemon crew 🍋</p>
+      <div class="howto">
+        <div><b>Mouse</b> look around</div>
+        <div><b>Click</b> launch a lemon</div>
+        <div><b>W A S D</b> walk</div>
+        <div><b>R</b> reload (auto when empty)</div>
+        <div><b>Esc</b> pause</div>
+        <div><b>M</b> sound on/off</div>
+      </div>
+      <p class="rules">Bonk enough ducks before the <b>60-second</b> timer runs out to reach the next level.
+      Lemons fly in an arc, so aim a little high on far ducks. No ducks are harmed: they just get a juicy surprise!</p>
+      <button id="btn-play" class="btn">▶ PLAY</button>
+      <div class="best-line">Best score: <span id="start-best">0</span></div>
+    </div>
+  </div>
+
+  <!-- Pause screen -->
+  <div id="screen-pause" class="screen hidden">
+    <div class="panel small">
+      <h2>Paused</h2>
+      <p>Take a lemonade break.</p>
+      <button id="btn-resume" class="btn">▶ RESUME</button>
+      <button id="btn-quit" class="btn ghost">Quit to title</button>
+    </div>
+  </div>
+
+  <!-- Game over -->
+  <div id="screen-over" class="screen hidden">
+    <div class="panel small">
+      <h2 id="over-title">Time's up!</h2>
+      <div class="stats">
+        <div><span>Score</span><b id="over-score">0</b></div>
+        <div><span>Level reached</span><b id="over-level">1</b></div>
+        <div><span>Ducks bonked</span><b id="over-ducks">0</b></div>
+        <div><span>Accuracy</span><b id="over-acc">0%</b></div>
+        <div><span>Best</span><b id="over-best">0</b></div>
+      </div>
+      <div id="over-newbest" class="hidden">🍋 NEW BEST SCORE! 🍋</div>
+      <button id="btn-replay" class="btn">↻ PLAY AGAIN</button>
+      <button id="btn-title" class="btn ghost">Title screen</button>
+    </div>
+  </div>
+
+  <!-- Loading -->
+  <div id="screen-loading" class="screen">
+    <div class="panel small"><h2>Squeezing lemons…</h2><div class="bar"><div id="load-bar"></div></div></div>
+  </div>
+
+  <!-- Touch controls -->
+  <div id="touch" class="hidden">
+    <div id="joy"><div id="joy-knob"></div></div>
+    <button id="t-fire">🍋</button>
+    <button id="t-reload">R</button>
+    <button id="t-pause">II</button>
+  </div>
+</div>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,29 @@
+Lemon Launcher: Duck Hunt — credits & licenses
+==============================================
+
+Game code, HTML/CSS, procedural duck/lemon/launcher models, procedural canvas textures
+(lemon peel + pores, mallard plumage, wing speculum, feathers, grass blades, launcher paint)
+and all Web Audio sound effects: written for this project (Milton Choto & Milton L.).
+
+Third-party (all vendored locally, no network needed at runtime):
+
+1. three.js r186 (0.186.1) — https://threejs.org — MIT License (see vendor/THREE-LICENSE.txt)
+   - vendor/three.module.js, vendor/three.core.js
+   - vendor/addons/Sky.js   (examples/jsm/objects/Sky.js — Preetham sky model with clouds)
+   - vendor/addons/Water.js (examples/jsm/objects/Water.js — reflective water)
+   - assets/textures/waternormals.jpg (three.js repo examples/textures/waternormals.jpg, MIT)
+
+2. ambientCG (https://ambientcg.com) — CC0 1.0 Universal (public domain), downscaled/re-encoded:
+   - Grass004 (1K)   -> assets/textures/grass_color.jpg, grass_normal.jpg
+                        https://ambientcg.com/view?id=Grass004
+   - Ground037 (1K)  -> assets/textures/mud_color.jpg, mud_normal.jpg (rocks)
+                        https://ambientcg.com/view?id=Ground037
+   - Bark012 (1K)    -> assets/textures/bark_color.jpg, bark_normal.jpg (tree trunks)
+                        https://ambientcg.com/view?id=Bark012
+   - LeafSet024 (1K) -> assets/textures/leaves.png (color + opacity merged to RGBA; tree foliage cards)
+                        https://ambientcg.com/view?id=LeafSet024
+
+Duck model: no third-party mallard model was used. A freely licensed *animated, flying* mallard glTF
+with a clear CC0/CC-BY license could not be found without account-gated downloads, so the mallards
+(drake and hen) are built procedurally in js/duck.js with painted textures and a two-segment
+flapping wing rig.
