@@ -12,6 +12,7 @@ const RELOAD_TIME = 1.25;
 const FIRE_COOLDOWN = 0.28;
 const LEMON_SPEED = 72;
 const LEMON_GRAVITY = 4.0;
+const WIND_ACC = 0.08; // m/s^2 of sideways push per mph of wind (close shots barely move)
 const DUCK_SCALE = 2.3;
 const HIT_RADIUS = 1.6;
 const EYE_HEIGHT = 1.7;
@@ -252,16 +253,37 @@ function groundOrWater(x, z) {
 
 // ======================= ducks =======================
 const ducks = [];
-function spawnDuck(attract = false, force = null) {
+const DISTANT_MAX = IS_MOBILE ? 5 : 10;
+const RED_EYE = new THREE.MeshBasicMaterial({ color: 0xff2200 });
+const RED_EYE_GEO = new THREE.SphereGeometry(0.011, 8, 6);
+const ANGRY_TINT = new Map();
+function makeAngry(mesh) {
+  // angrier look: darker, red-flushed plumage + glowing red eyes
+  mesh.traverse((o) => {
+    if (!o.isMesh || !o.material || !o.material.color) return;
+    let m = ANGRY_TINT.get(o.material);
+    if (!m) { m = o.material.clone(); m.color.multiply(new THREE.Color(1.25, 0.45, 0.4)); if (m.emissive) { m.emissive.setRGB(0.25, 0.02, 0); } ANGRY_TINT.set(o.material, m); }
+    o.material = m;
+  });
+  const hg = mesh.userData.headGrp;
+  for (const sx of [1, -1]) { const e = new THREE.Mesh(RED_EYE_GEO, RED_EYE); e.position.set(0.039 * sx, 0.014, 0.02); hg.add(e); }
+}
+function spawnSpecial(kind) {
+  const d = spawnDuck(false, null, kind);
+  return d;
+}
+function spawnDuck(attract = false, force = null, kind = 'normal') {
   const lvl = attract ? 1 : game.level;
   const hen = force && force.hen !== undefined ? force.hen : Math.random() < 0.35;
   const mesh = createDuck(hen);
   mesh.scale.setScalar(DUCK_SCALE * rand(0.92, 1.08));
+  if (kind === 'angry') makeAngry(mesh);
+  if (kind === 'distant') { mesh.scale.multiplyScalar(1.3); mesh.traverse((o) => { o.castShadow = false; }); }
   scene.add(mesh);
   const speedMul = 1 + 0.13 * (lvl - 1);
   const d = {
     mesh, hen, t: 0, state: 'fly', hit: false, flap: rand(0, 6), flapRate: rand(10.5, 13), speed: rand(8.5, 12.5) * speedMul,
-    pos: new THREE.Vector3(), vel: new THREE.Vector3(), prevHeading: null, roll: 0, quackT: rand(1, 4), attract,
+    pos: new THREE.Vector3(), vel: new THREE.Vector3(), prevHeading: null, roll: 0, quackT: rand(1, 4), attract, kind,
   };
   const r = Math.random();
   const types = lvl >= 3 ? [['cross', 0.3], ['weave', 0.22], ['takeoff', 0.18], ['circle', 0.15], ['swoop', 0.15]] : [['cross', 0.42], ['weave', 0.18], ['takeoff', 0.22], ['circle', 0.1], ['swoop', 0.08]];
@@ -289,6 +311,21 @@ function spawnDuck(attract = false, force = null) {
     d.type = 'cross'; d.p0 = new THREE.Vector3(force.x, force.y, force.z); d.dir = new THREE.Vector3(force.dx, 0, force.dz).normalize();
     d.speed = force.speed; d.bobA = force.bob ?? 0.5; d.bobW = 1;
   }
+  if (kind === 'distant') {
+    // atmosphere: slow flocks far off across the horizon (still shootable with the scope)
+    const a = rand(-2.6, -0.5) + (Math.random() < 0.15 ? Math.PI : 0); const R = rand(140, 200);
+    d.type = 'cross'; d.speed = rand(7, 10); d.bobA = rand(0.5, 2); d.bobW = rand(0.3, 0.7);
+    d.p0 = new THREE.Vector3(Math.cos(a) * R, rand(28, 55), Math.sin(a) * R);
+    d.dir = new THREE.Vector3(-Math.sin(a) * dir, 0, Math.cos(a) * dir).normalize();
+    d.p0.addScaledVector(d.dir, -110);
+    d.flapRate = rand(8, 10);
+  } else if (kind === 'angry') {
+    // spawns far out, then charges straight at the player
+    const a = player.yaw + rand(-1.1, 1.1); const R = rand(85, 120);
+    d.type = 'charge'; d.speed = (24 + 2.5 * (lvl - 1)) * rand(0.9, 1.1); d.flapRate = 19;
+    d.p0 = new THREE.Vector3(player.x - Math.sin(a) * R, rand(18, 32), player.z - Math.cos(a) * R);
+    d.zig = rand(2.5, 4.5); d.zigA = rand(3, 6); d.quackT = 0.2; d.chargeV = 0.5;
+  }
   pathPos(d, 0, d.pos); mesh.position.copy(d.pos);
   ducks.push(d);
   return d;
@@ -315,6 +352,7 @@ function pathPos(d, t, out) {
       out.y = 0.15 + d.climb * (1 - Math.exp(-0.32 * t)) + 0.6 * t;
       return out;
     }
+    case 'charge': return out.copy(d.p0);
     case 'circle': {
       const R = d.R + Math.max(0, t - d.exitT) * d.speed * 0.9;
       const a = d.a0 + d.cdir * (d.speed * t) / R;
@@ -331,13 +369,14 @@ function updateDucks(dt) {
     d.t += dt;
     if (d.state === 'fly') {
       const prev = tmpV2.copy(d.pos);
-      pathPos(d, d.t, d.pos);
+      if (d.type === 'charge') { if (chargeStep(d, dt)) { scene.remove(d.mesh); ducks.splice(i, 1); continue; } }
+      else pathPos(d, d.t, d.pos);
       d.vel.copy(d.pos).sub(prev).divideScalar(Math.max(dt, 1e-4));
       // takeoff: water spray while skimming the surface
       if (d.type === 'takeoff' && d.pos.y < 1.2 && Math.random() < 0.6) particles.emit(d.pos.x, 0.1, d.pos.z, rand(-1, 1), rand(1, 3), rand(-1, 1), 0.7, 0.1, 0.05, WATER_WHITE, 0.8, 9, 0.3);
       d.flap += dt * d.flapRate;
       flapDuck(d.mesh, d.flap, d.type === 'takeoff' && d.t < 2 ? 1.25 : 1);
-      if (!d.attract) { d.quackT -= dt; if (d.quackT < 0) { d.quackT = rand(5, 12); if (d.pos.distanceTo(camera.position) < 70) sfx.quack(rand(0.95, 1.15)); } }
+      if (!d.attract && d.kind !== 'distant') { d.quackT -= dt; if (d.quackT < 0) { d.quackT = d.kind === 'angry' ? rand(1.2, 2) : rand(5, 12); if (d.kind === 'angry') sfx.angryQuack(); else if (d.pos.distanceTo(camera.position) < 70) sfx.quack(rand(0.95, 1.15)); } }
     } else if (d.state === 'tumble') {
       d.vel.y -= 9.8 * dt;
       d.pos.addScaledVector(d.vel, dt);
@@ -380,9 +419,36 @@ function updateDucks(dt) {
       let r = d.roll; if (d.state === 'flyoff') r += Math.sin(d.t * 9) * 0.45; // dizzy wobble
       d.mesh.rotateZ(r);
     }
-    const far = Math.hypot(d.pos.x, d.pos.z) > 260 || d.pos.y > 120 || d.t > 45;
+    const far = Math.hypot(d.pos.x, d.pos.z) > (d.kind === 'distant' ? 330 : 260) || d.pos.y > 120 || d.t > (d.kind === 'distant' ? 70 : 45);
     if (far) { scene.remove(d.mesh); ducks.splice(i, 1); }
   }
+}
+
+const chargeTmp = new THREE.Vector3(), chargeSide = new THREE.Vector3();
+// aggressive duck: accelerates toward the camera with a zig-zag dive; returns true if it struck the player
+function chargeStep(d, dt) {
+  const target = chargeTmp.copy(camera.position); target.y -= 0.15;
+  const to = target.sub(d.pos); const dist = to.length();
+  if (dist < 1.6) { duckStrike(d); return true; }
+  to.divideScalar(dist);
+  d.chargeV = Math.min(1, d.chargeV + dt * 0.6);
+  const sp = d.speed * (0.55 + 0.6 * d.chargeV);
+  chargeSide.set(-to.z, 0, to.x).normalize();
+  const zz = Math.sin(d.t * d.zigA) * d.zig * Math.min(1, dist / 25);
+  d.pos.addScaledVector(to, sp * dt).addScaledVector(chargeSide, (zz - (d.zz || 0)));
+  d.zz = zz;
+  return false;
+}
+let hurtT = 0, shakeT = 0;
+function duckStrike(d) {
+  if (game.state !== 'playing') return;
+  const pen = Math.min(game.score, 150 + 25 * (game.level - 1));
+  game.score -= pen; game.combo = 0; game.time = Math.max(0, game.time - 3);
+  hurtT = 0.6; shakeT = 0.45;
+  const fl = $('hurt'); fl.classList.remove('show'); void fl.offsetWidth; fl.classList.add('show');
+  sfx.ouch(); sfx.angryQuack();
+  emitFeathers(camera.position.clone().add(new THREE.Vector3(0, 0, -1.2).applyQuaternion(camera.quaternion)), 26, false);
+  banner("OUCH!", pen > 0 ? `Angry duck hit you: -${pen} pts, -3 s` : "Angry duck hit you: -3 s", 1.4);
 }
 
 function startFlyoff(d, fromGround) {
@@ -414,10 +480,12 @@ function hitDuck(d, lemon) {
   const dist = hitPos.distanceTo(camera.position);
   game.combo += 1;
   const mult = Math.min(5, game.combo);
-  const pts = Math.round((100 + Math.round(dist) * 2) * mult);
+  let pts = Math.round((100 + Math.round(dist) * 2) * mult);
+  if (d.kind === 'angry') pts += 250; if (d.kind === 'distant') pts += 200;
   game.score += pts; game.hits += 1; game.totalHits += 1;
   const words = ['BONK!', 'SQUEEZED!', 'JUICY!', 'ZEST!', 'SPLAT!', 'QUACK!', 'SOUR POWER!'];
   showPopup(hitPos, `+${pts}`, mult > 1 ? `${words[(Math.random() * words.length) | 0]} x${mult}` : words[(Math.random() * words.length) | 0]);
+  if (d.kind === 'angry') showPopup(hitPos.clone().add(new THREE.Vector3(0, 2, 0)), 'ANGRY DUCK +250', 'Nice save!'); else if (d.kind === 'distant') showPopup(hitPos.clone().add(new THREE.Vector3(0, 3, 0)), 'LONG SHOT +200');
   const hm = $('hitmarker'); hm.classList.add('show'); setTimeout(() => hm.classList.remove('show'), 90);
   if (game.hits === game.quota) { banner('Quota reached!', 'Keep bonking for bonus points'); sfx.chime(true); }
 }
@@ -450,7 +518,7 @@ const keys = {};
 const recoil = { z: 0, rx: 0, vz: 0, vrx: 0 };
 
 function levelParams(l) {
-  return { quota: 6 + 2 * l, maxDucks: Math.min(11, 3 + l), spawnEvery: Math.max(0.45, 1.7 - 0.16 * (l - 1)) };
+  return { quota: 6 + 2 * l, maxDucks: Math.min(IS_MOBILE ? 14 : 26, 7 + 2 * l), angryEvery: Math.max(3.5, 10 - 1.2 * (l - 1)), maxAngry: Math.min(4, 1 + Math.floor(l / 2)), spawnEvery: Math.max(0.22, 0.75 - 0.08 * (l - 1)) };
 }
 function clearDucks() { for (const d of ducks) scene.remove(d.mesh); ducks.length = 0; }
 function setScreen(id) {
@@ -473,8 +541,10 @@ function beginRound() {
   setScreen(null);
   banner(`Level ${game.level}`, `Bonk ${game.quota} ducks in ${ROUND_TIME} seconds!`, 2.4);
   buildAmmoIcons();
+  newWind(true);
 }
 function endRound() {
+  setScope(false);
   if (game.hits >= game.quota) {
     game.state = 'between'; game.betweenT = 3.2;
     const bonus = game.time > 0 ? 0 : 250 * game.level;
@@ -484,6 +554,7 @@ function endRound() {
   } else gameOver();
 }
 function gameOver() {
+  setScope(false);
   game.state = 'gameover';
   sfx.chime(false);
   const newBest = game.score > game.best;
@@ -496,6 +567,7 @@ function gameOver() {
   setScreen('screen-over');
 }
 function pause() {
+  setScope(false);
   if (game.state !== 'playing' && game.state !== 'between') return;
   game.prevState = game.state; game.state = 'paused';
   setScreen('screen-pause');
@@ -508,6 +580,7 @@ function resume() {
   requestLock();
 }
 function toTitle() {
+  setScope(false);
   game.state = 'title'; clearDucks();
   if (document.pointerLockElement) document.exitPointerLock();
   $('start-best').textContent = game.best;
@@ -556,6 +629,7 @@ function updateLemons(dt) {
     const L = lemons[i];
     L.prev.copy(L.mesh.position);
     L.vel.y -= LEMON_GRAVITY * dt;
+    L.vel.x += wind.x * WIND_ACC * dt; L.vel.z += wind.z * WIND_ACC * dt;
     L.mesh.position.addScaledVector(L.vel, dt);
     L.life -= dt;
     // orient long axis along flight, with spin
@@ -576,7 +650,8 @@ function updateLemons(dt) {
       if (d.hit || d.state !== 'fly') continue;
       const tt = segLen2 > 0 ? clamp(tmpV.copy(d.pos).sub(L.prev).dot(seg) / segLen2, 0, 1) : 0;
       segClosest.copy(L.prev).addScaledVector(seg, tt);
-      if (segClosest.distanceToSquared(d.pos) < HIT_RADIUS * HIT_RADIUS) { hit = d; break; }
+      const hr = d.kind === 'distant' ? HIT_RADIUS * 1.6 : d.kind === 'angry' ? HIT_RADIUS * 1.2 : HIT_RADIUS;
+      if (segClosest.distanceToSquared(d.pos) < hr * hr) { hit = d; break; }
     }
     if (hit) { hitDuck(hit, L); removeLemon(i); continue; }
     const g = groundOrWater(p.x, p.z);
@@ -591,8 +666,135 @@ function updateLemons(dt) {
 }
 function removeLemon(i) { scene.remove(lemons[i].mesh); lemons.splice(i, 1); }
 
+// ======================= wind & scope ballistics HUD =======================
+const wind = { x: 0, z: 0, mph: 0, dir: 0, tMph: 0, tDir: 0, timer: 0 };
+function newWind(round) {
+  const lvl = game.level || 1;
+  const max = Math.min(4 + lvl * 2.5, 16);
+  wind.tMph = rand(round ? 1 : 0.5, max);
+  wind.tDir = round ? rand(0, Math.PI * 2) : wind.tDir + rand(-0.7, 0.7);
+  if (round) { wind.mph = wind.tMph; wind.dir = wind.tDir; }
+  wind.timer = rand(5, 9);
+}
+function updateWind(dt) {
+  wind.timer -= dt; if (wind.timer <= 0) newWind(false);
+  wind.mph += (wind.tMph - wind.mph) * Math.min(1, dt * 0.8);
+  let dd = wind.tDir - wind.dir; dd = Math.atan2(Math.sin(dd), Math.cos(dd));
+  wind.dir += dd * Math.min(1, dt * 0.8);
+  wind.x = Math.sin(wind.dir) * wind.mph; wind.z = -Math.cos(wind.dir) * wind.mph;
+}
+newWind(true);
+const MIL = 0.001;
+const fwdV = new THREE.Vector3(), rightV = new THREE.Vector3(), toD = new THREE.Vector3();
+let hudT = 0, lastRetH = 0, lastRetW = 0, lastFov = 0;
+// predicted ballistics for a target at range R (meters): drop & wind drift in mils
+function ballistics(R) {
+  const t = R / LEMON_SPEED;
+  const drop = 0.5 * LEMON_GRAVITY * t * t;
+  const crossW = wind.x * rightV.x + wind.z * rightV.z; // +right
+  const drift = 0.5 * crossW * WIND_ACC * t * t;
+  return { dropMil: drop / R / MIL, driftMil: drift / R / MIL };
+}
+function rangeUnderCrosshair() {
+  let best = null, bestA = 0.035;
+  for (const d of ducks) {
+    if (d.hit || d.state !== 'fly') continue;
+    toD.copy(d.pos).sub(camera.position); const dist = toD.length(); if (dist < 1) continue;
+    const a = Math.acos(clamp(toD.dot(fwdV) / dist, -1, 1));
+    const tol = bestA + (d.kind === 'distant' ? 0.01 : 0);
+    if (a < tol) { bestA = a; best = { R: dist, d }; }
+  }
+  if (best) return best;
+  if (fwdV.y < -0.002) {
+    for (let r = 5; r < 450; r += 5) {
+      const x = camera.position.x + fwdV.x * r, y = camera.position.y + fwdV.y * r, z = camera.position.z + fwdV.z * r;
+      if (y < groundOrWater(x, z)) return { R: r, d: null };
+    }
+  }
+  return null;
+}
+function drawReticle() {
+  const c = $('scope-reticle'); const w = innerWidth, h = innerHeight;
+  const dpr = Math.min(2, devicePixelRatio || 1);
+  c.width = w * dpr; c.height = h * dpr;
+  const g = c.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const ppm = (h / 2) / Math.tan(THREE.MathUtils.degToRad(SCOPE_FOV / 2)) * MIL; // pixels per mil at full zoom
+  const cx = w / 2, cy = h / 2, rad = Math.min(w, h) * 0.43;
+  g.strokeStyle = '#000'; g.fillStyle = '#000'; g.lineWidth = 1.5; g.font = '10px monospace'; g.textAlign = 'center';
+  // windage hashes every 2 mil (horizontal), numbered every 10
+  const step = ppm > 6 ? 2 : 5, lab = ppm > 6 ? 10 : 20;
+  for (let m = step; m * ppm < rad; m += step) {
+    const L = m % lab === 0 ? 9 : 5;
+    for (const sgn of [-1, 1]) { const x = cx + sgn * m * ppm; g.beginPath(); g.moveTo(x, cy - L); g.lineTo(x, cy + L); g.stroke(); if (m % lab === 0) g.fillText(String(m), x, cy - 12); }
+  }
+  // elevation (BDC) hashes every 2 mil below centre with dot pairs; numbered every 10
+  g.textAlign = 'left';
+  for (let m = step; m * ppm < rad; m += step) {
+    const y = cy + m * ppm, L = m % lab === 0 ? 12 : 6;
+    g.beginPath(); g.moveTo(cx - L, y); g.lineTo(cx + L, y); g.stroke();
+    if (m % lab === 0) g.fillText(String(m), cx + 15, y + 3);
+    if (m % lab === 0) for (let k = step; k <= 4 * step && k * ppm < rad * 0.7; k += step) { g.beginPath(); g.arc(cx - k * ppm, y, 1.4, 0, 7); g.arc(cx + k * ppm, y, 1.4, 0, 7); g.fill(); }
+  }
+  for (let m = step; m * ppm < rad; m += step) { const y = cy - m * ppm; g.beginPath(); g.moveTo(cx - 4, y); g.lineTo(cx + 4, y); g.stroke(); }
+  lastRetW = w; lastRetH = h;
+}
+function updateBallisticHUD(dt) {
+  camera.getWorldDirection(fwdV);
+  rightV.set(-fwdV.z, 0, fwdV.x).normalize();
+  // relative wind arrow: 0deg = blowing away from you (up)
+  const along = wind.x * fwdV.x + wind.z * fwdV.z, cross = wind.x * rightV.x + wind.z * rightV.z;
+  const ang = Math.atan2(cross, along) * 180 / Math.PI - 90;
+  hudT -= dt; if (hudT > 0) return; hudT = 0.12;
+  const mph = wind.mph.toFixed(0);
+  const rot = `rotate(${ang.toFixed(0)}deg)`;
+  $('wf-arrow').style.transform = rot; setText('wf-text', `WIND ${mph} mph`);
+  $('wind-flag').style.display = (game.state === 'playing' || game.state === 'between') && scope.k < 0.5 ? 'flex' : 'none';
+  if (scope.k < 0.05) return;
+  if (innerWidth !== lastRetW || innerHeight !== lastRetH) drawReticle();
+  $('sd-arrow').style.transform = rot;
+  setText('sd-wind', `${mph} mph ${cross > 0.3 ? '→' : cross < -0.3 ? '←' : '·'}`);
+  setText('sd-ammo', game.reloading > 0 ? 'RELOAD' : `${game.ammo}/${MAG_SIZE}`);
+  const r = rangeUnderCrosshair();
+  if (!r) { setText('sd-range', '--- m'); setText('sd-elev', '--'); setText('sd-hold', '--'); setText('sd-tgt', 'SKY'); return; }
+  const b = ballistics(r.R);
+  setText('sd-range', `${r.R.toFixed(0)}m/${(r.R * 1.0936).toFixed(0)}y`);
+  setText('sd-elev', `${b.dropMil.toFixed(1)}MIL ${(b.dropMil * 3.438).toFixed(0)}MOA`);
+  const dm = b.driftMil; const hold = Math.abs(dm) < 0.3 ? 'CENTER' : `${Math.abs(dm).toFixed(1)}MIL ${dm > 0 ? 'L' : 'R'}`;
+  setText('sd-hold', hold);
+  setText('sd-tgt', r.d ? (r.d.kind === 'distant' ? 'LONG' : r.d.kind === 'angry' ? 'ANGRY!' : 'DUCK') : 'GROUND');
+}
+
 // ======================= input =======================
 let locked = false;
+// ---------- scope / aim-down-sights ----------
+const BASE_FOV = 72, SCOPE_ZOOM = 4;
+const SCOPE_FOV = THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(BASE_FOV / 2)) / SCOPE_ZOOM));
+const scope = { want: false, on: false, k: 0, sx: 0, sy: 0 };
+function setScope(on) {
+  if (on && game.state !== 'playing' && game.state !== 'between') on = false;
+  if (scope.want === on) return;
+  scope.want = on; sfx.scopeIn(on);
+  const tb = document.getElementById('t-scope'); if (tb) tb.classList.toggle('on', on);
+}
+function updateScope(dt) {
+  scope.k += ((scope.want ? 1 : 0) - scope.k) * Math.min(1, dt * 12);
+  if (Math.abs(scope.k - (scope.want ? 1 : 0)) < 0.002) scope.k = scope.want ? 1 : 0;
+  const k = scope.k;
+  const fov = BASE_FOV + (SCOPE_FOV - BASE_FOV) * k;
+  if (Math.abs(camera.fov - fov) > 0.01) {
+    camera.fov = fov; camera.updateProjectionMatrix();
+    particles.mat.uniforms.uScale.value = (window.innerHeight * renderer.getPixelRatio()) / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)));
+  }
+  // gentle breathing sway while scoped
+  scope.sx = (Math.sin(elapsed * 0.9) * 0.0035 + Math.sin(elapsed * 2.3) * 0.0012) * k;
+  scope.sy = (Math.sin(elapsed * 1.3 + 1) * 0.0028) * k;
+  const el = $('scope'); el.style.opacity = k > 0.6 ? String((k - 0.6) / 0.4) : '0';
+  el.classList.toggle('hidden', k < 0.01);
+  $('crosshair').style.opacity = String(1 - k);
+  launcher.visible = launcher.visible && k < 0.5;
+}
+canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+window.addEventListener('mouseup', (e) => { if (e.button === 2) setScope(false); });
 function requestLock() {
   if (isTouch) return;
   try {
@@ -611,22 +813,25 @@ document.addEventListener('mousemove', (e) => {
   look(e.movementX, e.movementY);
 });
 function look(dx, dy, sens = 0.0021) {
+  sens *= 1 - 0.72 * scope.k; // finer aim while scoped
   player.yaw -= dx * sens;
   player.pitch = clamp(player.pitch - dy * sens, -0.35, 1.35);
 }
 canvas.addEventListener('mousedown', (e) => {
+  if (e.button === 2 && !isTouch) { if (game.state === 'playing' || game.state === 'between') setScope(true); return; }
   if (e.button !== 0 || isTouch) return;
   if (game.state === 'playing') { if (!locked) requestLock(); else fire(); }
 });
 window.addEventListener('keydown', (e) => {
   keys[e.code] = true;
+  if (e.code === 'KeyZ' && !e.repeat) setScope(true);
   if (e.code === 'KeyR') startReload();
   if (e.code === 'KeyM') sfx.toggleMute();
   if (e.code === 'Escape' || e.code === 'KeyP') { if (game.state === 'paused') { if (e.code === 'KeyP') resume(); } else pause(); }
   if (e.code === 'Space' && game.state === 'playing') { fire(); e.preventDefault(); }
 });
-window.addEventListener('keyup', (e) => { keys[e.code] = false; });
-window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
+window.addEventListener('keyup', (e) => { keys[e.code] = false; if (e.code === 'KeyZ') setScope(false); });
+window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; setScope(false); });
 
 $('btn-play').addEventListener('click', startGame);
 $('btn-replay').addEventListener('click', startGame);
@@ -649,6 +854,7 @@ if (isTouch) {
   jb.addEventListener('touchmove', (e) => { e.preventDefault(); for (const t of e.changedTouches) if (t.identifier === joy.id) jmove(t); });
   jb.addEventListener('touchend', (e) => { e.preventDefault(); joy.x = joy.y = 0; joy.id = null; knob.style.transform = ''; });
   $('t-fire').addEventListener('touchstart', (e) => { e.preventDefault(); fire(); });
+  $('t-scope').addEventListener('touchstart', (e) => { e.preventDefault(); sfx.init(); setScope(!scope.want); });
   $('t-reload').addEventListener('touchstart', (e) => { e.preventDefault(); startReload(); });
   $('t-pause').addEventListener('touchstart', (e) => { e.preventDefault(); pause(); });
 }
@@ -705,7 +911,9 @@ function updatePlayer(dt) {
   }
   const bobY = moving ? Math.sin(player.bob) * 0.04 : 0;
   camera.position.set(player.x, terrainHeight(player.x, player.z) + EYE_HEIGHT + bobY, player.z);
-  camera.rotation.set(player.pitch, player.yaw, 0);
+  let shx = 0, shy = 0;
+  if (shakeT > 0) { const a = shakeT * 0.09; shx = (Math.random() - 0.5) * a; shy = (Math.random() - 0.5) * a; camera.position.y += (Math.random() - 0.5) * a * 0.6; }
+  camera.rotation.set(player.pitch + scope.sy + shx, player.yaw + scope.sx + shy, 0);
   return moving;
 }
 
@@ -731,13 +939,15 @@ function update(dt) {
     // attract mode: slow cinematic look around with ducks flying
     player.yaw = Math.sin(elapsed * 0.05) * 0.5; player.pitch = 0.15 + Math.sin(elapsed * 0.08) * 0.05;
     updatePlayer(dt);
-    if (ducks.length < 4 && Math.random() < dt * 0.8) spawnDuck(true);
+    if (ducks.length < 6 && Math.random() < dt * 0.8) spawnDuck(true);
+    if (ducks.filter((d) => d.kind === 'distant').length < DISTANT_MAX && Math.random() < dt) spawnDuck(true, null, 'distant');
     updateDucks(dt);
     launcher.visible = false;
   } else if (game.state !== 'paused') {
     launcher.visible = true;
     const moving = updatePlayer(dt);
     updateLauncher(dt, moving);
+    if (shakeT > 0) shakeT -= dt;
     if (game.state === 'playing') {
       game.time -= dt;
       if (game.time <= 5 && Math.ceil(game.time) !== lastTick && game.time > 0) { lastTick = Math.ceil(game.time); sfx.tick(); }
@@ -745,8 +955,14 @@ function update(dt) {
       if (game.reloading > 0) { game.reloading -= dt; if (game.reloading <= 0) { game.reloading = 0; game.ammo = MAG_SIZE; updateAmmo(); } }
       const p = levelParams(game.level);
       game.spawnT -= dt;
-      const active = ducks.filter((d) => d.state === 'fly').length;
-      if (game.spawnT <= 0 && active < p.maxDucks) { spawnDuck(); game.spawnT = p.spawnEvery * rand(0.7, 1.3); }
+      let active = 0, angry = 0, distant = 0;
+      for (const d of ducks) { if (d.state !== 'fly') continue; if (d.kind === 'angry') angry++; else if (d.kind === 'distant') distant++; else active++; }
+      // ramps up through the round: starts ~60% of the cap, reaches full flock by the last 20 s
+      const cap = Math.round(p.maxDucks * (0.6 + 0.4 * clamp((ROUND_TIME - game.time) / 40, 0, 1)));
+      if (game.spawnT <= 0 && active < cap) { if (Math.random() < 0.3 && active < cap - 2) { const n = 3; for (let k = 0; k < n; k++) spawnDuck(); } else spawnDuck(); game.spawnT = p.spawnEvery * rand(0.7, 1.3); }
+      game.angryT = (game.angryT ?? 4) - dt;
+      if (game.angryT <= 0 && angry < p.maxAngry && game.time > 2) { spawnSpecial('angry'); game.angryT = p.angryEvery * rand(0.7, 1.3); }
+      if (distant < DISTANT_MAX && Math.random() < dt * 1.5) spawnSpecial('distant');
       if (game.time <= 0) { game.time = 0; endRound(); }
     } else if (game.state === 'between') {
       game.betweenT -= dt;
@@ -755,6 +971,9 @@ function update(dt) {
     updateDucks(dt);
     updateLemons(dt);
   }
+  updateScope(dt);
+  if (game.state !== 'paused') updateWind(dt);
+  updateBallisticHUD(dt);
   if (game.state !== 'paused') {
     particles.update(dt);
     updateFeathers(dt, elapsed);
@@ -816,6 +1035,7 @@ tick();
 // Small debug/test hook (used for automated smoke tests)
 window.__game = {
   sfx, showPopup, game, ducks, lemons, fire, startGame, pause, resume, spawnDuck, player, camera, renderer,
+  setScope, scope, spawnSpecial, wind, newWind,
   setAim(yaw, pitch) { player.yaw = yaw; player.pitch = pitch; },
   // deterministic stepping for automated tests on slow software-GL machines
   manual(on) { manualStepping = on; },

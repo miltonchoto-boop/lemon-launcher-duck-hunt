@@ -163,6 +163,37 @@ export class Sfx {
     });
   }
 
+  scopeIn(on = true) {
+    if (!this.ctx || this.muted) return;
+    const c = this.ctx, t = c.currentTime;
+    // mechanical click + lens slide whoosh
+    const o = c.createOscillator(); o.type = 'square'; o.frequency.setValueAtTime(on ? 1800 : 1300, t); o.frequency.exponentialRampToValueAtTime(on ? 600 : 400, t + 0.03);
+    const g = c.createGain(); this._env(g, t, 0.001, 0.35, 0.04); o.connect(g); g.connect(this.master); o.start(t); o.stop(t + 0.07);
+    const n = this._noiseSrc(); const bp = c.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 2;
+    bp.frequency.setValueAtTime(on ? 600 : 2400, t); bp.frequency.exponentialRampToValueAtTime(on ? 2400 : 600, t + 0.18);
+    const g2 = c.createGain(); this._env(g2, t + 0.02, 0.03, 0.22, 0.16); n.connect(bp); bp.connect(g2); g2.connect(this.master); n.start(t, Math.random()); n.stop(t + 0.25);
+  }
+
+  angryQuack() {
+    if (!this.ctx || this.muted) return;
+    const c = this.ctx, t = c.currentTime;
+    this.quack(0.72); this.quack(0.68, 0.09);
+    // growly distorted honk underneath
+    const o = c.createOscillator(); o.type = 'sawtooth'; o.frequency.setValueAtTime(190, t); o.frequency.linearRampToValueAtTime(120, t + 0.35);
+    const ws = c.createWaveShaper(); const cur = new Float32Array(256); for (let i = 0; i < 256; i++) { const x = i / 128 - 1; cur[i] = Math.tanh(x * 6); } ws.curve = cur;
+    const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 1400;
+    const g = c.createGain(); this._env(g, t, 0.01, 0.45, 0.35); o.connect(ws); ws.connect(lp); lp.connect(g); g.connect(this.master); o.start(t); o.stop(t + 0.4);
+  }
+
+  ouch() {
+    if (!this.ctx || this.muted) return;
+    const c = this.ctx, t = c.currentTime;
+    const o = c.createOscillator(); o.type = 'sine'; o.frequency.setValueAtTime(140, t); o.frequency.exponentialRampToValueAtTime(45, t + 0.3);
+    const g = c.createGain(); this._env(g, t, 0.003, 1.2, 0.35); o.connect(g); g.connect(this.master); o.start(t); o.stop(t + 0.4);
+    const n = this._noiseSrc(); const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 900;
+    const g2 = c.createGain(); this._env(g2, t, 0.002, 0.7, 0.2); n.connect(lp); lp.connect(g2); g2.connect(this.master); n.start(t, Math.random()); n.stop(t + 0.3);
+  }
+
   tick() {
     if (!this.ctx || this.muted) return;
     const c = this.ctx, t = c.currentTime;

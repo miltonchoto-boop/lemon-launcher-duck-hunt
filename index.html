@@ -40,6 +40,11 @@
     <div id="crosshair"><span></span><span></span><span></span><span></span><i></i></div>
     <div id="hitmarker"></div>
     <div id="banner" class="hidden"></div>
+    <div id="scope" class="hidden"><div class="scope-ring"></div><div class="scope-h"></div><div class="scope-v"></div><div class="scope-dot"></div><canvas id="scope-reticle"></canvas>
+      <div id="scope-data"><div class="sd-row"><span class="sd-k">RNG</span><span id="sd-range">---</span></div><div class="sd-row"><span class="sd-k">ELEV</span><span id="sd-elev">0.0 MIL</span></div><div class="sd-row"><span class="sd-k">WIND</span><span id="sd-wind">0 mph</span></div><div class="sd-row"><span class="sd-k">HOLD</span><span id="sd-hold">0.0 MIL</span></div></div>
+      <div id="scope-data2"><div class="sd-row"><span class="sd-k">ZOOM</span><span>4.0×</span></div><div class="sd-row"><span class="sd-k">RND</span><span id="sd-ammo">8/8</span></div><div class="sd-row"><span class="sd-k">TGT</span><span id="sd-tgt">—</span></div><div id="sd-arrow-wrap"><div id="sd-arrow">➤</div></div></div></div>
+    <div id="wind-flag"><div id="wf-arrow">➤</div><div id="wf-text">WIND 0</div></div>
+    <div id="hurt"></div>
     <div id="lock-hint" class="hidden">Click to aim</div>
   </div>
   <div id="popups"></div>
@@ -53,13 +58,16 @@
       <div class="howto">
         <div><b>Mouse</b> look around</div>
         <div><b>Click</b> launch a lemon</div>
+        <div><b>Right-click / Z</b> (hold) scope zoom</div>
         <div><b>W A S D</b> walk</div>
         <div><b>R</b> reload (auto when empty)</div>
         <div><b>Esc</b> pause</div>
         <div><b>M</b> sound on/off</div>
       </div>
       <p class="rules">Bonk enough ducks before the <b>60-second</b> timer runs out to reach the next level.
-      Lemons fly in an arc, so aim a little high on far ducks. No ducks are harmed: they just get a juicy surprise!</p>
+      Lemons fly in an arc, so aim a little high on far ducks. Hold <b>right-click</b> (or <b>Z</b>, or the 🔭 button on phones) to look through the scope and pick off far-away flocks for a <b>+200 long-shot bonus</b>. <b>Wind</b> pushes your lemons sideways and far shots drop: read the scope&#39;s RNG / HOLD / WIND and aim with the reticle marks.
+      Watch out for <b style="color:#ff6a4a">red-eyed angry ducks</b>: they dive straight at you! Bonk them for <b>+250</b>, or lose points and 3 seconds if one hits you.
+      No ducks are harmed: they just get a juicy surprise!</p>
       <button id="btn-play" class="btn">▶ PLAY</button>
       <div class="sound-ctl"><button type="button" class="vol-btn" aria-label="Mute">🔊</button><input class="vol" type="range" min="0" max="100" value="100" aria-label="Volume"></div>
       <div class="best-line">Best score: <span id="start-best">0</span></div>
@@ -103,6 +111,7 @@
   <div id="touch" class="hidden">
     <div id="joy"><div id="joy-knob"></div></div>
     <button id="t-fire">🍋</button>
+    <button id="t-scope">🔭</button>
     <button id="t-reload">R</button>
     <button id="t-pause">II</button>
   </div>
