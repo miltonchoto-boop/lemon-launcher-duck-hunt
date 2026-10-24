@@ -29,7 +29,7 @@ function wingShapeGeometry(x0, x1) {
   return geo;
 }
 
-function deformedSphere(sx, sy, sz, fn, w = 28, h = 20) {
+function deformedSphere(sx, sy, sz, fn, w = 44, h = 32) {
   const g = new THREE.SphereGeometry(1, w, h);
   const p = g.attributes.position;
   for (let i = 0; i < p.count; i++) {

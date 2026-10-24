@@ -23,14 +23,17 @@ const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
 // ======================= renderer / scene =======================
 const canvas = $('game');
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+// Quality tier: phones/tablets start lighter, desktops get crisper output; adaptQuality() fine-tunes at runtime.
+const IS_MOBILE = matchMedia('(pointer: coarse)').matches || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+window.__QUALITY = IS_MOBILE ? 'mobile' : 'high';
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance', stencil: false });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, IS_MOBILE ? 1.5 : 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 0.55;
+renderer.toneMappingExposure = 0.62;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFShadowMap;
+renderer.shadowMap.type = THREE.PCFShadowMap; // (PCFSoft is removed in this three.js build; soft edges come from shadow.radius)
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(72, window.innerWidth / window.innerHeight, 0.03, 12000);
@@ -720,6 +723,7 @@ function updateLauncher(dt, moving) {
 function update(dt) {
   if (game.state !== 'paused') elapsed += dt;
   world.water.material.uniforms.time.value = elapsed * 0.5;
+  if (world.update) world.update(elapsed, camera);
   world.wind.value = elapsed;
   if (world.sky.material.uniforms.time) world.sky.material.uniforms.time.value = elapsed;
 
@@ -759,13 +763,14 @@ function update(dt) {
 }
 
 // Adaptive resolution keeps the frame rate smooth on modest laptops.
-const maxPR = Math.min(window.devicePixelRatio, 1.5);
+const maxPR = Math.min(window.devicePixelRatio, IS_MOBILE ? 1.5 : 2);
 let pr = maxPR, ftAvg = 16, ftN = 0;
 function adaptQuality(frameMs) {
   ftAvg += (frameMs - ftAvg) * 0.05; ftN++;
   if (ftN < 90) return;
   ftN = 0;
   if (ftAvg > 24 && pr > 0.75) { pr = Math.max(0.75, pr - 0.15); renderer.setPixelRatio(pr); resize(); }
+  else if (ftAvg > 30 && world.setLowQuality) world.setLowQuality(); // still struggling at min resolution: drop shadow/reflection detail
   else if (ftAvg < 13 && pr < maxPR) { pr = Math.min(maxPR, pr + 0.1); renderer.setPixelRatio(pr); resize(); }
 }
 
@@ -796,11 +801,21 @@ manager.onLoad = () => {
 };
 // Fallback in case all textures were cached before the manager hooked up
 setTimeout(() => { if (game.state === 'loading') manager.onLoad(); }, 8000);
+// UI click sound on every menu button + volume slider
+document.querySelectorAll('.btn, #t-reload, #t-pause').forEach((b) => b.addEventListener('pointerdown', () => { sfx.init(); sfx.ui(); }));
+{
+  const vols = document.querySelectorAll('.vol'), vbs = document.querySelectorAll('.vol-btn');
+  const sync = () => { const ic = sfx.muted || sfx.volume === 0 ? '🔇' : sfx.volume < 0.5 ? '🔉' : '🔊'; vbs.forEach((b) => (b.textContent = ic)); vols.forEach((v) => (v.value = Math.round(sfx.volume * 100))); };
+  vols.forEach((v) => v.addEventListener('input', () => { sfx.init(); sfx.setVolume(v.value / 100); sync(); }));
+  vbs.forEach((b) => b.addEventListener('click', (e) => { e.stopPropagation(); sfx.init(); sfx.toggleMute(); sync(); }));
+  document.addEventListener('keydown', (e) => { if (e.code === 'KeyM') setTimeout(sync, 0); });
+  sync();
+}
 tick();
 
 // Small debug/test hook (used for automated smoke tests)
 window.__game = {
-  showPopup, game, ducks, lemons, fire, startGame, pause, resume, spawnDuck, player, camera, renderer,
+  sfx, showPopup, game, ducks, lemons, fire, startGame, pause, resume, spawnDuck, player, camera, renderer,
   setAim(yaw, pitch) { player.yaw = yaw; player.pitch = pitch; },
   // deterministic stepping for automated tests on slow software-GL machines
   manual(on) { manualStepping = on; },

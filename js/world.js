@@ -56,18 +56,21 @@ export function buildWorld(renderer, scene, loader) {
   scene.environmentIntensity = 0.45;
   pmrem.dispose();
 
-  scene.fog = new THREE.Fog(0xb4c8d8, 90, 620);
+  scene.fog = new THREE.FogExp2(0xbfd2e0, 0.0019); // exponential haze, colour matched to the horizon
 
   // ---------- Sun ----------
   const sun = new THREE.DirectionalLight(0xfff1d6, 3.2);
   sun.position.copy(sunDir).multiplyScalar(120);
   sun.castShadow = true;
-  sun.shadow.mapSize.set(2048, 2048);
+  const mobile = window.__QUALITY === 'mobile';
+  sun.shadow.mapSize.set(mobile ? 1024 : 4096, mobile ? 1024 : 4096);
   const sc = sun.shadow.camera; sc.left = -70; sc.right = 70; sc.top = 70; sc.bottom = -70; sc.near = 1; sc.far = 400;
   sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.04; sun.shadow.radius = 4;
   scene.add(sun); scene.add(sun.target);
   out.sun = sun;
-  const hemi = new THREE.HemisphereLight(0xcfe3ff, 0x4a5a2a, 0.35); scene.add(hemi);
+  const hemi = new THREE.HemisphereLight(0xcfe3ff, 0x4a5a2a, 0.42); scene.add(hemi);
+  // soft cool fill opposite the sun so shadowed sides of ducks/trees are not flat
+  const fill = new THREE.DirectionalLight(0xbcd4ff, 0.35); fill.position.set(-sunDir.x, 0.6, -sunDir.z).multiplyScalar(100); scene.add(fill);
 
   // ---------- Textures ----------
   const L = (f, srgb = true, rep = 1) => {
@@ -120,11 +123,31 @@ export function buildWorld(renderer, scene, loader) {
   // ---------- Pond (reflective water) ----------
   const waterNormals = L('waternormals.jpg', false, 1);
   const water = new Water(new THREE.CircleGeometry(POND.r + 3, 72), {
-    textureWidth: 512, textureHeight: 512, waterNormals,
-    sunDirection: sunDir.clone(), sunColor: 0xffffff, waterColor: 0x1d3a2c, distortionScale: 1.6, fog: true, alpha: 0.95,
+    textureWidth: mobile ? 512 : 1024, textureHeight: mobile ? 512 : 1024, waterNormals,
+    sunDirection: sunDir.clone(), sunColor: 0xfff2d8, waterColor: 0x12302a, distortionScale: 2.6, fog: true, alpha: 1.0,
   });
   water.rotation.x = -Math.PI / 2; water.position.set(POND.x, 0.02, POND.z);
-  water.material.uniforms.size.value = 3.5;
+  water.material.uniforms.size.value = 2.4;
+  // Shader upgrade: tinted (less mirror-white) reflections, sharper sun glints, and animated shoreline foam.
+  {
+    // find the shoreline radius (where terrain rises above the water surface)
+    let shoreR = POND.r;
+    for (let r = 5; r < POND.r + 6; r += 0.1) { let s = 0; for (let k = 0; k < 16; k++) { const a = k / 16 * Math.PI * 2; s += terrainHeight(POND.x + Math.cos(a) * r, POND.z + Math.sin(a) * r); } if (s / 16 > 0.02) { shoreR = r; break; } }
+    const u = water.material.uniforms;
+    u.uPond = { value: new THREE.Vector3(POND.x, POND.z, shoreR) };
+    let fs = water.material.fragmentShader;
+    fs = fs.replace('uniform vec3 sunColor;', 'uniform vec3 sunColor;\nuniform vec3 uPond;');
+    fs = fs.replace('sunLight( surfaceNormal, eyeDirection, 100.0, 2.0, 0.5, diffuseLight, specularLight );',
+      'sunLight( surfaceNormal, eyeDirection, 100.0, 2.0, 0.5, diffuseLight, specularLight );\n\t\t\t\t\tsunLight( surfaceNormal, eyeDirection, 900.0, 6.0, 0.0, diffuseLight, specularLight );');
+    fs = fs.replace('reflectionSample + specularLight, reflectance );', `reflectionSample * vec3(0.55, 0.64, 0.62) + specularLight, reflectance );
+\t\t\t\t\tfloat dShore = uPond.z - length( worldPosition.xz - uPond.xy );
+\t\t\t\t\tfloat foamN = getNoise( worldPosition.xz * 1.6 ).x * 0.5 + 0.5;
+\t\t\t\t\tfloat band = 1.0 - smoothstep( 0.0, 1.4 + 0.5 * sin( time * 1.3 + worldPosition.x * 0.4 ), dShore );
+\t\t\t\t\tfloat foam = clamp( band * smoothstep( 0.35, 0.75, foamN + band * 0.3 ), 0.0, 1.0 ) * step( -0.5, dShore );
+\t\t\t\t\talbedo = mix( albedo, vec3( 0.86, 0.88, 0.84 ) * ( 0.55 + 0.45 * max( dot( sunDirection, vec3(0.0,1.0,0.0) ), 0.0 ) ), foam * 0.75 );`);
+    water.material.fragmentShader = fs;
+    water.material.needsUpdate = true;
+  }
   scene.add(water);
   out.water = water;
 
@@ -289,5 +312,12 @@ export function buildWorld(renderer, scene, loader) {
   }
   rocks.castShadow = rocks.receiveShadow = true; scene.add(rocks);
 
+  // Runtime quality fallback for very slow devices.
+  let lowQ = false;
+  out.setLowQuality = () => {
+    if (lowQ) return; lowQ = true;
+    sun.shadow.mapSize.set(1024, 1024); if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; }
+    renderer.shadowMap.type = THREE.PCFShadowMap; renderer.shadowMap.needsUpdate = true;
+  };
   return out;
 }

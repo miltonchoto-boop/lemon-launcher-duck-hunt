@@ -90,3 +90,8 @@ h2{font-size:34px;color:var(--lime-deep);margin-bottom:8px}
 #joy{pointer-events:auto;position:absolute;left:30px;bottom:120px;width:120px;height:120px;border-radius:50%;border:3px solid rgba(255,224,46,.6);background:rgba(40,80,10,.3)}
 #joy-knob{position:absolute;left:35px;top:35px;width:50px;height:50px;border-radius:50%;background:rgba(255,224,46,.8)}
 @media (max-width:640px){h1{font-size:32px}h1 span{font-size:28px}.howto{grid-template-columns:1fr}.hud-big{font-size:24px}.hud-box{min-width:90px;padding:6px 10px}}
+
+/* sound control (start + pause panels) */
+.sound-ctl { display: flex; align-items: center; justify-content: center; gap: 10px; margin: 12px auto 4px; }
+.sound-ctl .vol-btn { background: rgba(255,255,255,0.12); border: 1px solid rgba(245,217,10,0.6); border-radius: 50%; width: 36px; height: 36px; font-size: 18px; cursor: pointer; }
+.sound-ctl .vol { width: 150px; accent-color: #f5d90a; cursor: pointer; }
